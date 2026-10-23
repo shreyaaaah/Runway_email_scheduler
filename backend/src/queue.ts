@@ -1,5 +1,5 @@
 import { Queue, Worker, Job, DelayedError } from "bullmq";
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import { db } from "./db.js";
 import nodemailer from "nodemailer";
 import { Client } from "@elastic/elasticsearch";

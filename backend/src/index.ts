@@ -4,6 +4,7 @@ import session from "express-session";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { createBullBoard } from "@bull-board/api";
+import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { ExpressAdapter } from "@bull-board/express";
 import { z } from "zod";
 import nodemailer from "nodemailer";
@@ -70,6 +71,6 @@ app.delete("/api/slack/disconnect",requireUser,async(req,res)=>{await db.slackCo
 app.get("/api/slack/status",requireUser,async(req,res)=>res.json({connected:!!await db.slackConnection.findUnique({where:{userId:req.user!.id}})}));
 
 if (process.env.NODE_ENV !== "production") app.post("/api/dev/kill-worker", requireUser, (_req,res)=>{res.json({ok:true}); setTimeout(()=>process.exit(1),100);});
-const boardAdapter=new ExpressAdapter(); boardAdapter.setBasePath("/admin/queues"); createBullBoard({queues:[new (await import("@bull-board/api")).BullMQAdapter(emailQueue)],serverAdapter:boardAdapter});
+const boardAdapter=new ExpressAdapter(); boardAdapter.setBasePath("/admin/queues"); createBullBoard({queues:[new BullMQAdapter(emailQueue)],serverAdapter:boardAdapter});
 app.use("/admin/queues",(req,res,next)=>{const token=Buffer.from(`${process.env.QUEUE_ADMIN_USER??"admin"}:${process.env.QUEUE_ADMIN_PASSWORD??"change-me"}`).toString("base64"); if(req.headers.authorization!==`Basic ${token}`){res.setHeader("WWW-Authenticate","Basic realm=queues");return res.sendStatus(401)} next();},boardAdapter.getRouter());
 const port=Number(process.env.PORT??4000); app.listen(port,async()=>{await recoverStuckEmails();startWorker();console.log(`Runway API listening on ${port}`);});
