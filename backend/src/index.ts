@@ -35,21 +35,23 @@ const campaignSchema = z.object({ leads: z.array(z.string()), subject: z.string(
 app.post("/api/campaigns/preview", requireUser, async (req, res) => {
   const parsed = campaignSchema.safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { leads, startAt, delayMs, hourlyLimit } = parsed.data;
+  const effectiveDelayMs = Math.max(delayMs, Number(process.env.MIN_DELAY_MS_BETWEEN_SENDS ?? 1000));
   const valid = [...new Set(leads.map(x => x.trim()).filter(x => z.string().email().safeParse(x).success))];
   const senders = await sendersFor(req.user!.id); if (!senders.length) return res.status(400).json({ error: "Create a sender first" });
-  const plan = planSchedule({ leads: valid, senders, startAt: new Date(startAt), delayMs, hourlyLimit });
+  const plan = planSchedule({ leads: valid, senders, startAt: new Date(startAt), delayMs: effectiveDelayMs, hourlyLimit });
   const buckets = new Map<string, number>(); for (const item of plan) { const key = hourWindow(item.scheduledAt).toISOString(); buckets.set(key, (buckets.get(key) ?? 0) + 1); }
   res.json({ total: valid.length, plan, buckets: [...buckets].map(([hour,count])=>({hour,count})), finishAt: plan.at(-1)?.scheduledAt ?? null });
 });
 app.post("/api/campaigns", requireUser, async (req, res) => {
   const parsed = campaignSchema.safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { leads, subject, body, startAt, delayMs, hourlyLimit } = parsed.data;
+  const effectiveDelayMs = Math.max(delayMs, Number(process.env.MIN_DELAY_MS_BETWEEN_SENDS ?? 1000));
   const valid = [...new Set(leads.map(x => x.trim()).filter(x => z.string().email().safeParse(x).success))];
   if (!valid.length) return res.status(400).json({ error: "No valid unique recipients" });
   const senders = await sendersFor(req.user!.id); if (!senders.length) return res.status(400).json({ error: "Create a sender first" });
-  const plan = planSchedule({ leads: valid, senders, startAt: new Date(startAt), delayMs, hourlyLimit });
+  const plan = planSchedule({ leads: valid, senders, startAt: new Date(startAt), delayMs: effectiveDelayMs, hourlyLimit });
   const result = await db.$transaction(async tx => {
-    const campaign = await tx.campaign.create({ data: { userId: req.user!.id, subject, body, startAt: new Date(startAt), delayMs, hourlyLimit } });
+    const campaign = await tx.campaign.create({ data: { userId: req.user!.id, subject, body, startAt: new Date(startAt), delayMs: effectiveDelayMs, hourlyLimit } });
     const records = await Promise.all(plan.map(item => tx.email.create({ data: { campaignId: campaign.id, toEmail: item.to, senderId: item.senderId, subject, body, scheduledAt: item.scheduledAt }, include: { sender: true } })));
     await tx.emailEvent.createMany({ data: records.map(row => ({ emailId: row.id, type: "queued", payload: { scheduledAt: row.scheduledAt.toISOString(), senderId: row.senderId } })) });
     return records;
