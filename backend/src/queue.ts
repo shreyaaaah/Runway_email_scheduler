@@ -24,23 +24,46 @@ async function notifyRateLimit(senderId: string, hourKey: string, pushedTo: Date
 
 export function startWorker() {
   const worker = new Worker("emails", async (job: Job<{ emailId: string }>, token?: string) => {
-    const claim = await db.email.updateMany({ where: { id: job.data.emailId, status: "scheduled" }, data: { status: "processing", processingAt: new Date() } });
-    if (!claim.count) return;
-    const email = await db.email.findUnique({ where: { id: job.data.emailId }, include: { sender: true, campaign: true } });
-    if (!email) return;
-    await db.emailEvent.create({ data: { emailId: email.id, type: "claimed", payload: { jobId: job.id } } });
-    const hourStart = hourWindow(email.scheduledAt);
-    const hourKey = hourWindowKey(email.scheduledAt);
-    const key = `rl:${email.senderId}:${hourKey}`;
-    // First smooth the send rate; BullMQ persists delayed jobs during restarts.
-    const gapKey = `gap:${email.senderId}`;
-    // Atomic lease closes the race where concurrent jobs could all pass a read-then-set check.
+    const candidate = await db.email.findUnique({
+      where: { id: job.data.emailId },
+      include: { sender: true, campaign: true },
+    });
+    if (!candidate || (candidate.status !== "scheduled" && candidate.status !== "processing")) {
+      return;
+    }
+    const staleBefore = new Date(Date.now() - 120_000);
+    if (candidate.status === "processing" && candidate.processingAt && candidate.processingAt >= staleBefore) {
+      return;
+    }
+
+    // Do not claim while a previous send for this sender still holds the gap lease.
+    const gapKey = `gap:${candidate.senderId}`;
     const gapTtl = Number(await redis.eval(gapScript, 1, gapKey, minGap));
     if (gapTtl > 0) {
-      await db.email.update({ where: { id: email.id }, data: { status: "scheduled", processingAt: null } });
       await job.moveToDelayed(Date.now() + gapTtl + 25, token);
       throw new DelayedError();
     }
+
+    const claim = await db.email.updateMany({
+      where: {
+        id: candidate.id,
+        OR: [
+          { status: "scheduled" },
+          { status: "processing", processingAt: { lt: staleBefore } },
+        ],
+      },
+      data: { status: "processing", processingAt: new Date() },
+    });
+    if (!claim.count) return;
+
+    const email = candidate;
+    await db.emailEvent.create({
+      data: { emailId: email.id, type: "claimed", payload: { jobId: job.id } },
+    });
+    const hourStart = hourWindow(email.scheduledAt);
+    const hourKey = hourWindowKey(email.scheduledAt);
+    const key = `rl:${email.senderId}:${hourKey}`;
+    // BullMQ persists delayed jobs during restarts; this lease spaces sends by sender.
     const count = await redis.eval(rateScript, 1, key, maxHour);
     if (Number(count) === 0) {
       const pushed = new Date(hourStart.getTime() + 3_600_000 + (email.scheduledAt.getTime() % 60_000));
