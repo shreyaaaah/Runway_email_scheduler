@@ -3,6 +3,7 @@ import { Redis } from "ioredis";
 import { db } from "./db.js";
 import nodemailer from "nodemailer";
 import { Client } from "@elastic/elasticsearch";
+import { hourWindow, hourWindowKey } from "./time.js";
 
 export const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 export const emailQueue = new Queue("emails", { connection: redis });
@@ -28,8 +29,8 @@ export function startWorker() {
     const email = await db.email.findUnique({ where: { id: job.data.emailId }, include: { sender: true, campaign: true } });
     if (!email) return;
     await db.emailEvent.create({ data: { emailId: email.id, type: "claimed", payload: { jobId: job.id } } });
-    const at = new Date(email.scheduledAt); const hourStart = new Date(at); hourStart.setMinutes(0, 0, 0);
-    const hourKey = `${hourStart.getUTCFullYear()}${String(hourStart.getUTCMonth()+1).padStart(2,"0")}${String(hourStart.getUTCDate()).padStart(2,"0")}${String(hourStart.getUTCHours()).padStart(2,"0")}`;
+    const hourStart = hourWindow(email.scheduledAt);
+    const hourKey = hourWindowKey(email.scheduledAt);
     const key = `rl:${email.senderId}:${hourKey}`;
     // First smooth the send rate; BullMQ persists delayed jobs during restarts.
     const gapKey = `gap:${email.senderId}`;
