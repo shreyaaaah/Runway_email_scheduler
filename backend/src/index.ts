@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import session from "express-session";
 import passport from "passport";
-import { RedisStore } from "connect-redis";
+import RedisStore from "connect-redis";
 import { createClient } from "redis";
 import path from "node:path";
 import { existsSync } from "node:fs";
