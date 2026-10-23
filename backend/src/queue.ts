@@ -4,13 +4,13 @@ import { db } from "./db.js";
 import nodemailer from "nodemailer";
 import { Client } from "@elastic/elasticsearch";
 import { hourWindow, hourWindowKey } from "./time.js";
+import { RATE_LIMIT_LUA } from "./rateLimit.js";
 
 export const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 export const emailQueue = new Queue("emails", { connection: redis });
 export const es = new Client({ node: process.env.ELASTICSEARCH_URL ?? "http://localhost:9200" });
 const minGap = Number(process.env.MIN_DELAY_MS_BETWEEN_SENDS ?? 1000);
 const maxHour = Number(process.env.MAX_EMAILS_PER_HOUR_PER_SENDER ?? 100);
-const rateScript = `local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],3600) end; if n>tonumber(ARGV[1]) then redis.call('DECR',KEYS[1]); return 0 end; return n`;
 const gapScript = `local ttl=redis.call('PTTL',KEYS[1]); if ttl>0 then return ttl end; redis.call('SET',KEYS[1],'1','PX',ARGV[1]); return 0`;
 
 async function notifyRateLimit(senderId: string, hourKey: string, pushedTo: Date, limit: number) {
@@ -65,7 +65,7 @@ export function startWorker() {
     const key = `rl:${email.senderId}:${hourKey}`;
     const effectiveLimit = Math.min(email.campaign.hourlyLimit, maxHour);
     // BullMQ persists delayed jobs during restarts; this lease spaces sends by sender.
-    const count = await redis.eval(rateScript, 1, key, effectiveLimit);
+    const count = await redis.eval(RATE_LIMIT_LUA, 1, key, effectiveLimit);
     if (Number(count) === 0) {
       const pushed = new Date(hourStart.getTime() + 3_600_000 + (email.scheduledAt.getTime() % 60_000));
       await db.email.update({ where: { id: email.id }, data: { status: "scheduled", processingAt: null, scheduledAt: pushed } });
