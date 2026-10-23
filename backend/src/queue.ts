@@ -63,13 +63,14 @@ export function startWorker() {
     const hourStart = hourWindow(email.scheduledAt);
     const hourKey = hourWindowKey(email.scheduledAt);
     const key = `rl:${email.senderId}:${hourKey}`;
+    const effectiveLimit = Math.min(email.campaign.hourlyLimit, maxHour);
     // BullMQ persists delayed jobs during restarts; this lease spaces sends by sender.
-    const count = await redis.eval(rateScript, 1, key, maxHour);
+    const count = await redis.eval(rateScript, 1, key, effectiveLimit);
     if (Number(count) === 0) {
       const pushed = new Date(hourStart.getTime() + 3_600_000 + (email.scheduledAt.getTime() % 60_000));
       await db.email.update({ where: { id: email.id }, data: { status: "scheduled", processingAt: null, scheduledAt: pushed } });
-      await db.emailEvent.create({ data: { emailId: email.id, type: "rate_limited_rescheduled", payload: { pushedTo: pushed.toISOString(), limit: maxHour } } });
-      await notifyRateLimit(email.senderId, hourKey, pushed, maxHour);
+      await db.emailEvent.create({ data: { emailId: email.id, type: "rate_limited_rescheduled", payload: { pushedTo: pushed.toISOString(), limit: effectiveLimit } } });
+      await notifyRateLimit(email.senderId, hourKey, pushed, effectiveLimit);
       await job.moveToDelayed(Math.max(Date.now() + 1, pushed.getTime()), token);
       // DelayedError tells BullMQ the active job was deliberately moved, not failed.
       throw new DelayedError();
