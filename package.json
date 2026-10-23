@@ -1,0 +1,7 @@
+{
+  "name": "runway",
+  "private": true,
+  "workspaces": ["backend", "frontend"],
+  "scripts": {"dev": "concurrently -k -n api,web -c green,blue \"npm:dev:api\" \"npm:dev:web\"", "dev:api": "npm --workspace backend run dev", "dev:web": "npm --workspace frontend run dev", "test": "npm --workspace backend test", "build": "npm run build --workspaces"},
+  "devDependencies": {"concurrently": "^9.1.0"}
+}

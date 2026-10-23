@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String           @id @default(cuid())
+  googleId  String?          @unique
+  email     String           @unique
+  name      String
+  avatar    String?
+  senders   Sender[]
+  campaigns Campaign[]
+  slack     SlackConnection?
+  createdAt DateTime         @default(now())
+}
+
+model Sender {
+  id        String   @id @default(cuid())
+  userId    String
+  email     String
+  name      String
+  smtpHost  String
+  smtpPort  Int
+  smtpUser  String
+  smtpPass  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emails    Email[]
+
+  @@unique([userId, email])
+}
+
+model Campaign {
+  id         String   @id @default(cuid())
+  userId     String
+  subject    String
+  body       String
+  startAt    DateTime
+  delayMs    Int
+  hourlyLimit Int
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emails     Email[]
+}
+
+model Email {
+  id           String       @id @default(cuid())
+  campaignId   String
+  toEmail      String
+  subject      String
+  body         String
+  senderId     String
+  scheduledAt  DateTime
+  sentAt       DateTime?
+  status       String       @default("scheduled")
+  processingAt DateTime?
+  lastError    String?
+  campaign     Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  sender       Sender       @relation(fields: [senderId], references: [id])
+  events       EmailEvent[]
+
+  @@unique([campaignId, toEmail])
+  @@index([status, processingAt])
+  @@index([scheduledAt])
+}
+
+model EmailEvent {
+  id        String   @id @default(cuid())
+  emailId   String
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+  email     Email    @relation(fields: [emailId], references: [id], onDelete: Cascade)
+
+  @@index([emailId, createdAt])
+}
+
+model SlackConnection {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  accessToken String?
+  webhookUrl  String
+  channel     String?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
