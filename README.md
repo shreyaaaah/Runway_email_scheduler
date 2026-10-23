@@ -11,7 +11,7 @@ Email scheduling dashboard built with TypeScript, Express, PostgreSQL, BullMQ/Re
 5. Start API and UI with `npm run dev`.
 6. Sign in through Google. The API creates an Ethereal account with `POST /api/senders/test` (from Compose, use **Create Ethereal sender** once signed in).
 
-API listens on `http://localhost:4000`; UI on `http://localhost:5173`; protected Bull Board at `/admin/queues` uses the credentials in `.env`.
+In development, the API listens on `http://localhost:4000` and Vite serves the UI on `http://localhost:5173`. In production, Express serves `frontend/dist` from the API origin. Protected Bull Board at `/admin/queues` uses the credentials in `.env`.
 
 ## Ethereal
 
@@ -23,28 +23,29 @@ See `.env.example`. `WORKER_CONCURRENCY` controls active worker jobs. `MIN_DELAY
 
 ## Architecture and trade-offs
 
-- `planSchedule` is a pure ordered planner shared by campaign creation and preview. It rotates senders, enforces a per-sender minimum interval, and moves overflow to later UTC hour windows.
-- A campaign and all email rows/events are created in one database transaction. Then each delayed BullMQ job receives stable `email:<emailId>` identity. Redis AOF and PostgreSQL volumes retain queue and application state across container restarts.
-- Workers claim only `scheduled` rows with an atomic conditional update. Stale `processing` rows older than two minutes are reset and requeued at startup. The send itself is at-least-once across the narrow failure window after SMTP accepts mail but before the database commits; SMTP has no general idempotency key, so exactly-once delivery cannot be guaranteed. The row claim prevents ordinary duplicate work.
+- `planSchedule` is a pure ordered planner shared by campaign creation and preview. It rotates senders, applies a per-sender spacing interval, and moves overflow to later UTC hour windows.
+- Campaign rows and queued events are inserted with pre-generated IDs in one database transaction with a 60-second timeout. BullMQ receives deterministic `email:<emailId>` job IDs in bulk. Redis AOF and PostgreSQL volumes retain queue and application state across container restarts.
+- Workers pass the Redis sender-spacing gate before conditionally claiming `scheduled` rows or `processing` rows stale by two minutes. Startup recovery resets stale rows and repairs scheduled rows without queue jobs. The send itself is at-least-once across the narrow failure window after SMTP accepts mail but before the database commits; SMTP has no general idempotency key, so exactly-once delivery cannot be guaranteed. The row claim prevents ordinary duplicate work.
 - Hourly reservations use an atomic Redis Lua increment/undo. The hourly key uses UTC windows. The global hourly setting is applied per sender. Slack rate-limit notices are deduplicated by sender and hour.
-- BullMQ delayed jobs, not cron, handle all scheduling. Elasticsearch is a derived search index and is updated when queued/sent. Reindexing can be performed from PostgreSQL if ES is lost.
+- BullMQ delayed jobs, not cron, handle all scheduling. Elasticsearch is a derived search index and is updated when emails are queued, sent, or fail.
 - OAuth is required for dashboard APIs. A standalone email/password form is shown to mirror the reference, while account sign-in uses Google OAuth.
 
 ## Features mapped to the assignment
 
-- Campaign create/preview, pure scheduling planner and tests: `backend/src/schedule.ts`, `/api/campaigns*`.
-- Persistent queue, worker, rate limiting, crash recovery, Ethereal delivery: `backend/src/queue.ts`.
-- Slack incoming-webhook OAuth, Elasticsearch search, Bull Board, Google sign-in, email events/stats and dev kill switch: `backend/src/index.ts`.
-- Compose/upload/dedupe/preview, scheduled and sent lists, search, details/timeline and responsive dashboard: `frontend/src/App.tsx`.
+- Campaign create/preview and bulk queueing: `backend/src/routes/campaigns.ts`, `backend/src/services/campaigns.ts`.
+- Persistent queue, sender gate, rate limiting, crash recovery and Ethereal delivery: `backend/src/worker/`.
+- Slack OAuth and notifications: `backend/src/routes/slack.ts`, `backend/src/services/slackNotifier.ts`.
+- Search, email lists/events, stats and sender endpoints: `backend/src/routes/emails.ts`.
+- Compose/upload/preview and dashboard components: `frontend/src/App.tsx`, `frontend/src/components/`, `frontend/src/api.ts`.
 - Docker services and environment template at repository root.
 
 ## Assumptions
 
-- Default chosen minimum delay is 1 second and default per-sender cap is 100 messages per UTC hour; both are configurable.
+- Chosen default delay is **1 second between sends from the same sender** (`MIN_DELAY_MS_BETWEEN_SENDS=1000`). It is a conservative demo value that keeps scheduling responsive while visibly spacing messages. Set a longer delay for real provider policies. The default per-sender cap is 100 messages per UTC hour; both are configurable.
 - Senders belong to one authenticated user. Each compose action creates a campaign and deduplicates recipients case-insensitively.
 - The screenshots use placeholder data for their list/detail examples; the dashboard displays the authenticated user's real queued/sent data.
 - Gmail/Google and Slack credentials are provisioned outside the repository. Do not commit real secrets.
 
 ## Development checks
 
-Run planner and basic rate-limit behavior tests with `npm test`. Preview a 1,200-recipient schedule distribution with `npm run loadtest --workspace backend` after configuring a user and sender.
+Run planner tests and the Redis Lua integration test with `npm test`; Redis must be running, and `REDIS_TEST_URL` can point the test at a dedicated Redis instance. Preview a 1,200-recipient schedule distribution with `npm run loadtest --workspace backend` after configuring a user and sender.
