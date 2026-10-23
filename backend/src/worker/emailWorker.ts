@@ -28,9 +28,13 @@ async function claimEmail(emailId: string, jobId: string | undefined) {
     return null;
   }
 
-  const staleBefore = new Date(Date.now() - 120_000);
-  if (candidate.status === "processing" && (!candidate.processingAt || candidate.processingAt >= staleBefore)) {
-    return null;
+  const now = Date.now();
+  const staleBefore = new Date(now - 120_000);
+  if (candidate.status === "processing") {
+    const staleAt = (candidate.processingAt?.getTime() ?? 0) + 120_000;
+    if (staleAt > now) {
+      return { delayedFor: staleAt - now + 1_000 } as const;
+    }
   }
 
   const gapKey = `gap:${candidate.senderId}`;
