@@ -4,17 +4,25 @@ import { RATE_LIMIT_LUA } from "../src/rateLimit.js";
 
 describe("hourly Redis Lua reservation", () => {
   const connection = new Redis(process.env.REDIS_TEST_URL ?? process.env.REDIS_URL ?? "redis://localhost:6379", {
+    lazyConnect: true,
+    connectTimeout: 2_000,
+    retryStrategy: attempt => attempt < 2 ? 100 : null,
     maxRetriesPerRequest: null,
   });
   const key = `test:rate-limit:${process.pid}:${Date.now()}`;
 
   beforeAll(async () => {
+    await connection.connect();
     await connection.ping();
   });
 
   afterAll(async () => {
-    await connection.del(key);
-    await connection.quit();
+    if (connection.status === "ready") {
+      await connection.del(key);
+      await connection.quit();
+      return;
+    }
+    connection.disconnect();
   });
 
   it("allows up to the cap and undoes an over-limit increment in Redis", async () => {

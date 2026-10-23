@@ -5,3 +5,21 @@
 .badge.failed{background:#fde8e7;color:#bb2f27}
 
 .slack-status{text-align:center;font-size:10px;color:#8b949e}
+
+.outline{border:1px solid #00ad4e;color:#00a848}
+.quiet{color:#657082}
+.input-wrap{display:grid;gap:6px}
+.input-wrap>span{font-size:11px;color:#7b8493}
+.modal-scrim,.drawer-scrim{position:fixed;inset:0;background:#12182055;z-index:9;display:flex;justify-content:center;align-items:center}
+.modal-card{width:min(420px,calc(100vw - 32px));background:#fff;border-radius:10px;padding:18px;box-shadow:0 10px 40px #0002}
+.modal-card>header,.drawer>header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.modal-card h2,.drawer h2{font-size:17px;font-weight:500;margin:0}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.drawer-scrim{justify-content:flex-end;align-items:stretch}
+.drawer{width:min(600px,100vw);overflow:auto;background:#fff;padding:24px;box-shadow:-8px 0 32px #0002}
+.detail-status{margin:14px 0 0 39px}
+.detail-actions{display:flex;gap:12px;margin-left:39px;color:#97a1ae}
+.limits .input-wrap{display:inline-flex;gap:0}
+.limits .input-wrap>span{display:none}
+.recipient-row .chips>input{border:0}
+@media(max-width:760px){.drawer{padding:16px}}
