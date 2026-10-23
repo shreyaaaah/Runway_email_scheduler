@@ -56,13 +56,38 @@ app.post("/api/campaigns", requireUser, async (req, res) => {
     await tx.emailEvent.createMany({ data: records.map(row => ({ emailId: row.id, type: "queued", payload: { scheduledAt: row.scheduledAt.toISOString(), senderId: row.senderId } })) });
     return records;
   });
-  for (const row of result) { await emailQueue.add("send", { emailId: row.id }, { jobId: `email:${row.id}`, delay: Math.max(0, row.scheduledAt.getTime() - Date.now()), attempts: 3, backoff: { type: "exponential", delay: 2000 }, removeOnComplete: true }); await es.index({ index: "emails", id: row.id, document: { userId: req.user!.id, to: row.toEmail, subject, body, status: "scheduled" } }); }
+  for (const row of result) {
+    await emailQueue.add("send", { emailId: row.id }, { jobId: `email:${row.id}`, delay: Math.max(0, row.scheduledAt.getTime() - Date.now()), attempts: 3, backoff: { type: "exponential", delay: 2000 }, removeOnComplete: true });
+    await es.index({ index: "emails", id: row.id, document: { id: row.id, userId: req.user!.id, toEmail: row.toEmail, subject, body, scheduledAt: row.scheduledAt, sentAt: null, status: "scheduled" } });
+  }
   res.status(201).json({ campaignId: result[0]?.campaignId, count: result.length });
 });
 
-app.get("/api/emails", requireUser, async (req,res) => { const status = req.query.status === "sent" ? "sent" : "scheduled"; const page = Math.max(1, Number(req.query.page ?? 1)); const [items,total] = await Promise.all([db.email.findMany({ where: { status, campaign: { userId: req.user!.id } }, include: { sender: true }, orderBy: { scheduledAt: "desc" }, skip: (page-1)*50, take: 50 }), db.email.count({ where: { status, campaign: { userId: req.user!.id } } })]); res.json({ items, total, page }); });
+app.get("/api/emails", requireUser, async (req, res) => {
+  const status = req.query.status === "sent" ? ["sent", "failed"] : ["scheduled", "processing"];
+  const page = Math.max(1, Number(req.query.page ?? 1));
+  const where = { status: { in: status }, campaign: { userId: req.user!.id } };
+  const [items, total] = await Promise.all([
+    db.email.findMany({ where, include: { sender: true }, orderBy: { scheduledAt: "desc" }, skip: (page - 1) * 50, take: 50 }),
+    db.email.count({ where }),
+  ]);
+  res.json({ items, total, page });
+});
 app.get("/api/emails/:id/events", requireUser, async (req,res) => { const email = await db.email.findFirst({ where: { id: req.params.id, campaign: { userId: req.user!.id } }, include: { events: { orderBy: { createdAt: "asc" } } } }); if (!email) return res.sendStatus(404); res.json(email.events); });
-app.get("/api/search", requireUser, async (req,res) => { const q = String(req.query.q ?? ""); if (!q) return res.json({ items: [] }); const r = await es.search({ index:"emails", query:{ bool:{ must:[{ multi_match:{ query:q, fields:["to","subject","body","status"] } }], filter:[{ term:{ userId:req.user!.id } }] } } }).catch(()=>null); res.json({ items: r?.hits.hits.map(h=>h._source) ?? [] }); });
+app.get("/api/search", requireUser, async (req, res) => {
+  const q = String(req.query.q ?? "");
+  if (!q) return res.json({ items: [] });
+  const result = await es.search({
+    index: "emails",
+    query: {
+      bool: {
+        must: [{ multi_match: { query: q, fields: ["toEmail", "subject", "body", "status"] } }],
+        filter: [{ term: { userId: req.user!.id } }],
+      },
+    },
+  }).catch(() => null);
+  res.json({ items: result?.hits.hits.map(hit => hit._source) ?? [] });
+});
 app.get("/api/stats", requireUser, async (req,res) => { const [scheduled,sent,failed,senders] = await Promise.all([db.email.count({where:{status:"scheduled",campaign:{userId:req.user!.id}}}),db.email.count({where:{status:"sent",campaign:{userId:req.user!.id}}}),db.email.count({where:{status:"failed",campaign:{userId:req.user!.id}}}),sendersFor(req.user!.id)]); const hourKey = hourWindowKey(new Date()); const usage = await Promise.all(senders.map(async s=>({senderId:s.id,email:s.email,used:Number(await redis.get(`rl:${s.id}:${hourKey}`)??0),limit:Number(process.env.MAX_EMAILS_PER_HOUR_PER_SENDER??100)}))); res.json({scheduled,sent,failed,usage}); });
 
 app.post("/api/senders/test", requireUser, async (req,res) => { const account = await nodemailer.createTestAccount(); const sender = await db.sender.create({ data:{ userId:req.user!.id,email:account.user,name:req.user!.name,smtpHost:account.smtp.host,smtpPort:account.smtp.port,smtpUser:account.user,smtpPass:account.pass } }); res.status(201).json(sender); });

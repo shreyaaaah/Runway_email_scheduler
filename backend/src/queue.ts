@@ -79,9 +79,13 @@ export function startWorker() {
     try {
       const info = await transport.sendMail({ from: `${email.sender.name} <${email.sender.email}>`, to: email.toEmail, subject: email.subject, html: email.body });
       await db.$transaction([db.email.update({ where: { id: email.id }, data: { status: "sent", sentAt: new Date(), processingAt: null } }), db.emailEvent.create({ data: { emailId: email.id, type: "sent", payload: { messageId: info.messageId, previewUrl: nodemailer.getTestMessageUrl(info) } } })]);
-      await es.index({ index: "emails", id: email.id, document: { userId: email.campaign.userId, to: email.toEmail, subject: email.subject, body: email.body, status: "sent" } });
+      await es.index({ index: "emails", id: email.id, document: { id: email.id, userId: email.campaign.userId, toEmail: email.toEmail, subject: email.subject, body: email.body, scheduledAt: email.scheduledAt, sentAt: new Date(), status: "sent" } });
     } catch (error) {
-      if (job.attemptsMade + 1 >= 3) { await db.email.update({ where: { id: email.id }, data: { status: "failed", lastError: String(error), processingAt: null } }); await db.emailEvent.create({ data: { emailId: email.id, type: "failed", payload: { error: String(error) } } }); }
+      if (job.attemptsMade + 1 >= 3) {
+        await db.email.update({ where: { id: email.id }, data: { status: "failed", lastError: String(error), processingAt: null } });
+        await db.emailEvent.create({ data: { emailId: email.id, type: "failed", payload: { error: String(error) } } });
+        await es.index({ index: "emails", id: email.id, document: { id: email.id, userId: email.campaign.userId, toEmail: email.toEmail, subject: email.subject, body: email.body, scheduledAt: email.scheduledAt, sentAt: null, status: "failed" } });
+      }
       else { await db.email.update({ where: { id: email.id }, data: { status: "scheduled", processingAt: null, lastError: String(error) } }); await db.emailEvent.create({ data: { emailId: email.id, type: "retrying", payload: { attempt: job.attemptsMade + 1, error: String(error) } } }); }
       throw error;
     }
