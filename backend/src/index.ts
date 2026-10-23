@@ -50,17 +50,48 @@ app.post("/api/campaigns", requireUser, async (req, res) => {
   if (!valid.length) return res.status(400).json({ error: "No valid unique recipients" });
   const senders = await sendersFor(req.user!.id); if (!senders.length) return res.status(400).json({ error: "Create a sender first" });
   const plan = planSchedule({ leads: valid, senders, startAt: new Date(startAt), delayMs: effectiveDelayMs, hourlyLimit });
-  const result = await db.$transaction(async tx => {
-    const campaign = await tx.campaign.create({ data: { userId: req.user!.id, subject, body, startAt: new Date(startAt), delayMs: effectiveDelayMs, hourlyLimit } });
-    const records = await Promise.all(plan.map(item => tx.email.create({ data: { campaignId: campaign.id, toEmail: item.to, senderId: item.senderId, subject, body, scheduledAt: item.scheduledAt }, include: { sender: true } })));
-    await tx.emailEvent.createMany({ data: records.map(row => ({ emailId: row.id, type: "queued", payload: { scheduledAt: row.scheduledAt.toISOString(), senderId: row.senderId } })) });
-    return records;
-  });
-  for (const row of result) {
-    await emailQueue.add("send", { emailId: row.id }, { jobId: `email:${row.id}`, delay: Math.max(0, row.scheduledAt.getTime() - Date.now()), attempts: 3, backoff: { type: "exponential", delay: 2000 }, removeOnComplete: true });
-    await es.index({ index: "emails", id: row.id, document: { id: row.id, userId: req.user!.id, toEmail: row.toEmail, subject, body, scheduledAt: row.scheduledAt, sentAt: null, status: "scheduled" } });
-  }
-  res.status(201).json({ campaignId: result[0]?.campaignId, count: result.length });
+  const campaignId = randomUUID();
+  const records = plan.map(item => ({
+    id: randomUUID(),
+    campaignId,
+    toEmail: item.to,
+    senderId: item.senderId,
+    subject,
+    body,
+    scheduledAt: item.scheduledAt,
+  }));
+  await db.$transaction(async tx => {
+    const campaign = await tx.campaign.create({ data: { id: campaignId, userId: req.user!.id, subject, body, startAt: new Date(startAt), delayMs: effectiveDelayMs, hourlyLimit } });
+    await tx.email.createMany({ data: records });
+    await tx.emailEvent.createMany({
+      data: records.map(row => ({
+        emailId: row.id,
+        type: "queued",
+        payload: { scheduledAt: row.scheduledAt.toISOString(), senderId: row.senderId },
+      })),
+    });
+    if (campaign.id !== campaignId) {
+      throw new Error("Campaign ID did not match the prepared email rows");
+    }
+  }, { timeout: 60_000 });
+
+  await emailQueue.addBulk(records.map(row => ({
+    name: "send",
+    data: { emailId: row.id },
+    opts: {
+      jobId: `email:${row.id}`,
+      delay: Math.max(0, row.scheduledAt.getTime() - Date.now()),
+      attempts: 3,
+      backoff: { type: "exponential" as const, delay: 2000 },
+      removeOnComplete: true,
+    },
+  })));
+  await Promise.all(records.map(row => es.index({
+    index: "emails",
+    id: row.id,
+    document: { id: row.id, userId: req.user!.id, toEmail: row.toEmail, subject, body, scheduledAt: row.scheduledAt, sentAt: null, status: "scheduled" },
+  })));
+  res.status(201).json({ campaignId, count: records.length });
 });
 
 app.get("/api/emails", requireUser, async (req, res) => {
