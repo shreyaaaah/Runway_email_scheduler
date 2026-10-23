@@ -3,3 +3,5 @@
 @media(max-width:760px){.sidebar{width:66px;padding:15px 8px}.logo{font-size:13px;letter-spacing:-1px;margin:4px 0 18px;writing-mode:vertical-rl}.profile{justify-content:center;padding:6px}.profile span:nth-child(2),.profile>svg,.section-label,.nav:not(.active){display:none}.compose-outline{font-size:0}.compose-outline:after{content:"+";font-size:18px}.nav{padding:0;justify-content:center;font-size:0}.main{padding:16px 12px}.email-row{grid-template-columns:minmax(80px,110px) auto minmax(30px,1fr) 20px;gap:5px;padding-left:4px}.preview{font-size:11px}.form{margin-top:20px}.field-row{gap:8px}.limits{flex-wrap:wrap}.limits .start-time{margin-left:0}.limits .start-time input{width:145px}.editor{min-height:300px}.editable{min-height:220px}.schedule-popover{right:0;top:42px}.detail-tools{gap:7px}.message{margin:24px 6px}}
 
 .badge.failed{background:#fde8e7;color:#bb2f27}
+
+.slack-status{text-align:center;font-size:10px;color:#8b949e}

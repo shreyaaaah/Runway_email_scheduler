@@ -14,11 +14,11 @@ const rateScript = `local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call(
 const gapScript = `local ttl=redis.call('PTTL',KEYS[1]); if ttl>0 then return ttl end; redis.call('SET',KEYS[1],'1','PX',ARGV[1]); return 0`;
 
 async function notifyRateLimit(senderId: string, hourKey: string, pushedTo: Date, limit: number) {
-  const dedupe = `slack-notice:${senderId}:${hourKey}`;
-  if (!(await redis.set(dedupe, "1", "EX", 3600, "NX"))) return;
   const sender = await db.sender.findUnique({ where: { id: senderId }, include: { user: { include: { slack: true } } } });
   const webhook = sender?.user.slack?.webhookUrl;
   if (!webhook) return;
+  const dedupe = `slack-notice:${senderId}:${hourKey}`;
+  if (!(await redis.set(dedupe, "1", "EX", 3600, "NX"))) return;
   await fetch(webhook, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `Runway rate limit: ${sender.email} reached ${limit}/hour. Remaining emails moved to ${pushedTo.toISOString()}.` }) }).catch(() => undefined);
 }
 
