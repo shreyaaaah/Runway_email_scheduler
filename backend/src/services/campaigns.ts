@@ -118,20 +118,30 @@ export async function createCampaign(userId: string, input: CampaignInput) {
     },
   })));
 
-  await Promise.all(records.map(email => es.index({
-    index: "emails",
-    id: email.id,
-    document: {
-      id: email.id,
-      userId,
-      toEmail: email.toEmail,
-      subject: email.subject,
-      body: email.body,
-      scheduledAt: email.scheduledAt,
-      sentAt: null,
-      status: "scheduled",
-    },
-  })));
+  try {
+    const operations = records.flatMap(email => [
+      { index: { _index: "emails", _id: email.id } },
+      {
+        id: email.id,
+        userId,
+        toEmail: email.toEmail,
+        subject: email.subject,
+        body: email.body,
+        scheduledAt: email.scheduledAt,
+        sentAt: null,
+        status: "scheduled",
+      },
+    ]);
+    const result = await es.bulk({ operations });
+    if (result.errors) {
+      console.error("Some campaign email documents were not indexed", {
+        campaignId,
+        failures: result.items.filter(item => item.index?.error),
+      });
+    }
+  } catch (error) {
+    console.error("Could not index campaign emails", { campaignId, error });
+  }
 
   return { campaignId, count: records.length };
 }
